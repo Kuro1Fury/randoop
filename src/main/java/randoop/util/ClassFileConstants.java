@@ -47,7 +47,7 @@ import randoop.reflection.TypeNames;
 import randoop.types.JavaTypes;
 
 // Implementation notes:  All string, float, and double constants are in
-// the constant table.  Integer constants less that 64K are in the code.
+// the constant table.  Integer constants less than 64K are in the code.
 // There are also special opcodes to push values from -1 to 5.  This code
 // does not include them, but it would be easy to add them.  This code also
 // does not include class literals as constants.
@@ -106,12 +106,18 @@ public class ClassFileConstants {
     /** Values that are non-receiver terms. */
     public Set<Class<?>> classes = new HashSet<>();
 
-    /** Set of aal enum constants in a class. */
+    /** Set of all enum constants in a class. */
     public Set<Enum<?>> enums = new HashSet<>();
 
     /** Map that stores the frequency that each constant occurs in the current class. */
     public Map<Object, Integer> constantFrequency = new HashMap<>();
 
+    /**
+     * Returns the frequency of the given constant in the current class.
+     *
+     * @param value the constant value
+     * @return the frequency of the constant in the current class
+     */
     public int getConstantFrequency(Object value) {
       return constantFrequency.getOrDefault(value, 0);
     }
