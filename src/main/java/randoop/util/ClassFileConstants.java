@@ -3,7 +3,9 @@ package randoop.util;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.StringJoiner;
 import java.util.TreeSet;
@@ -30,8 +32,12 @@ import org.apache.bcel.classfile.Method;
 import org.apache.bcel.generic.ClassGen;
 import org.apache.bcel.generic.ConstantPoolGen;
 import org.apache.bcel.generic.ConstantPushInstruction;
+import org.apache.bcel.generic.FieldInstruction;
 import org.apache.bcel.generic.Instruction;
 import org.apache.bcel.generic.InstructionList;
+import org.apache.bcel.generic.LDC;
+import org.apache.bcel.generic.LDC2_W;
+import org.apache.bcel.generic.LDC_W;
 import org.apache.bcel.generic.MethodGen;
 import org.apache.bcel.util.ClassPath;
 import org.checkerframework.checker.signature.qual.ClassGetName;
@@ -100,6 +106,22 @@ public class ClassFileConstants {
     /** Values that are non-receiver terms. */
     public Set<Class<?>> classes = new HashSet<>();
 
+    /** Set of all enum constants in a class. */
+    public Set<Enum<?>> enums = new HashSet<>();
+
+    /** Map that stores the frequency that each constant occurs in the current class. */
+    public Map<Object, Integer> constantFrequency = new HashMap<>();
+
+    /**
+     * Returns the frequency of the given constant in the current class.
+     *
+     * @param value the constant value
+     * @return the frequency of the constant in the current class
+     */
+    public int getConstantFrequency(Object value) {
+      return constantFrequency.getOrDefault(value, 0);
+    }
+
     @Override
     public String toString() {
       StringJoiner sb = new StringJoiner(randoop.Globals.lineSep);
@@ -122,6 +144,9 @@ public class ClassFileConstants {
       }
       for (Class<?> x : classes) {
         sb.add("Class:" + x);
+      }
+      for (Enum<?> x : enums) {
+        sb.add("Enum:" + x);
       }
       sb.add("%nEND CLASSLITERALS for " + classname);
 
@@ -195,15 +220,20 @@ public class ClassFileConstants {
         continue;
       }
       if (c instanceof ConstantString) {
-        result.strings.add((String) ((ConstantString) c).getConstantValue(constant_pool));
+        String value = (String) ((ConstantString) c).getConstantValue(constant_pool);
+        result.strings.add(value);
       } else if (c instanceof ConstantDouble) {
-        result.doubles.add((Double) ((ConstantDouble) c).getConstantValue(constant_pool));
+        Double value = (Double) ((ConstantDouble) c).getConstantValue(constant_pool);
+        result.doubles.add(value);
       } else if (c instanceof ConstantFloat) {
-        result.floats.add((Float) ((ConstantFloat) c).getConstantValue(constant_pool));
+        Float value = (Float) ((ConstantFloat) c).getConstantValue(constant_pool);
+        result.floats.add(value);
       } else if (c instanceof ConstantInteger) {
-        result.ints.add((Integer) ((ConstantInteger) c).getConstantValue(constant_pool));
+        Integer value = (Integer) ((ConstantInteger) c).getConstantValue(constant_pool);
+        result.ints.add(value);
       } else if (c instanceof ConstantLong) {
-        result.longs.add((Long) ((ConstantLong) c).getConstantValue(constant_pool));
+        Long value = (Long) ((ConstantLong) c).getConstantValue(constant_pool);
+        result.longs.add(value);
       } else {
         throw new RuntimeException("Unrecognized constant of type " + c.getClass() + ": " + c);
       }
@@ -211,7 +241,6 @@ public class ClassFileConstants {
 
     ClassGen gen = new ClassGen(jc);
     ConstantPoolGen pool = gen.getConstantPool();
-
     // Process the code in each method looking for literals
     for (Method m : jc.getMethods()) {
       @SuppressWarnings("signature") // BCEL's JavaClass is not annotated for the Signature Checker
@@ -221,13 +250,13 @@ public class ClassFileConstants {
         for (Instruction inst : il.getInstructions()) {
           switch (inst.getOpcode()) {
 
-              // Compare two objects, no literals
+            // Compare two objects, no literals
             case Const.IF_ACMPEQ:
             case Const.IF_ACMPNE:
               break;
 
-              // These instructions compare the integer on the top of the stack
-              // to zero. There are no literals here (except 0).
+            // These instructions compare the integer on the top of the stack
+            // to zero. There are no literals here (except 0).
             case Const.IFEQ:
             case Const.IFNE:
             case Const.IFLT:
@@ -235,46 +264,48 @@ public class ClassFileConstants {
             case Const.IFGT:
             case Const.IFLE:
               {
+                // If no instruction is followed by those instructions, then it is comparing to 0.
+                integerConstant(Integer.valueOf(0), result);
                 break;
               }
 
-              // InstanceOf pushes either 0 or 1 on the stack depending on
-              // whether
-              // the object on top of stack is of the specified type.
-              // If were interested in class literals, this would be interesting
+            // InstanceOf pushes either 0 or 1 on the stack depending on
+            // whether
+            // the object on top of stack is of the specified type.
+            // If were interested in class literals, this would be interesting
             case Const.INSTANCEOF:
               break;
 
-              // Duplicates the item on the top of stack. No literal.
+            // Duplicates the item on the top of stack. No literal.
             case Const.DUP:
               {
                 break;
               }
 
-              // Duplicates the item on the top of the stack and inserts it 2
-              // values down in the stack. No literals
+            // Duplicates the item on the top of the stack and inserts it 2
+            // values down in the stack. No literals
             case Const.DUP_X1:
               {
                 break;
               }
 
-              // Duplicates either the top 2 category 1 values or a single
-              // category 2 value and inserts it 2 or 3 values down on the
-              // stack.
+            // Duplicates either the top 2 category 1 values or a single
+            // category 2 value and inserts it 2 or 3 values down on the
+            // stack.
             case Const.DUP2_X1:
               {
                 break;
               }
 
-              // Duplicate either one category 2 value or two category 1 values.
+            // Duplicate either one category 2 value or two category 1 values.
             case Const.DUP2:
               {
                 break;
               }
 
-              // Dup the category 1 value on the top of the stack and insert it
-              // either
-              // two or three values down on the stack.
+            // Dup the category 1 value on the top of the stack and insert it
+            // either
+            // two or three values down on the stack.
             case Const.DUP_X2:
               {
                 break;
@@ -285,27 +316,27 @@ public class ClassFileConstants {
                 break;
               }
 
-              // Pop instructions discard the top of the stack.
+            // Pop instructions discard the top of the stack.
             case Const.POP:
               {
                 break;
               }
 
-              // Pops either the top 2 category 1 values or a single category 2
-              // value
-              // from the top of the stack.
+            // Pops either the top 2 category 1 values or a single category 2
+            // value
+            // from the top of the stack.
             case Const.POP2:
               {
                 break;
               }
 
-              // Swaps the two category 1 types on the top of the stack.
+            // Swaps the two category 1 types on the top of the stack.
             case Const.SWAP:
               {
                 break;
               }
 
-              // Compares two integers on the stack
+            // Compares two integers on the stack
             case Const.IF_ICMPEQ:
             case Const.IF_ICMPGE:
             case Const.IF_ICMPGT:
@@ -316,31 +347,65 @@ public class ClassFileConstants {
                 break;
               }
 
-              // Get the value of a field
+            // Get the value of a field
             case Const.GETFIELD:
               {
                 break;
               }
 
-              // stores the top of stack into a field
+            // stores the top of stack into a field
             case Const.PUTFIELD:
               {
                 break;
               }
 
-              // Pushes the value of a static field on the stack
+            // Pushes the value of a static field on the stack
             case Const.GETSTATIC:
               {
+                FieldInstruction fieldInstruction = (FieldInstruction) inst;
+                // Get the path
+                String enumName = fieldInstruction.getReferenceType(pool).toString();
+
+                if (!enumName.contains("$")) {
+                  break;
+                }
+                // It is an enum.
+
+                try {
+                  Class<?> enumClass = Class.forName((@ClassGetName String) enumName);
+
+                  // Example of how enum value can be extracted
+                  // @SuppressWarnings("unchecked")
+                  // Enum<?> enumConstant = Enum.valueOf((Class<Enum>) enumClass, "ENUM_ONE");
+
+                  if (enumClass.isEnum()) {
+                    @SuppressWarnings("unchecked")
+                    Class<Enum> enumType = (Class<Enum>) enumClass;
+
+                    String fieldName = fieldInstruction.getFieldName(pool);
+
+                    // Use the more specific enumType in the valueOf call to avoid unchecked warning
+                    @SuppressWarnings("unchecked")
+                    Enum<?> enumConstant = Enum.valueOf(enumType, fieldName);
+
+                    result.enums.add(enumConstant);
+                    result.constantFrequency.put(
+                        enumConstant, result.constantFrequency.getOrDefault(enumConstant, 0) + 1);
+                  }
+
+                } catch (ClassNotFoundException e) {
+                  throw new RuntimeException(e);
+                }
                 break;
               }
 
-              // Pops a value off of the stack into a static field
+            // Pops a value off of the stack into a static field
             case Const.PUTSTATIC:
               {
                 break;
               }
 
-              // pushes a local onto the stack
+            // pushes a local onto the stack
             case Const.DLOAD:
             case Const.DLOAD_0:
             case Const.DLOAD_1:
@@ -365,7 +430,7 @@ public class ClassFileConstants {
                 break;
               }
 
-              // Pops a value off of the stack into a local
+            // Pops a value off of the stack into a local
             case Const.DSTORE:
             case Const.DSTORE_0:
             case Const.DSTORE_1:
@@ -390,22 +455,117 @@ public class ClassFileConstants {
                 break;
               }
 
-              // Push a value from the constant pool. We'll get these
-              // values when processing the constant pool itself.
+            // Push a value from the constant pool. We'll get these
+            // values when processing the constant pool itself.
             case Const.LDC:
+              {
+                LDC ldcInstruction = (LDC) inst;
+                int index = ldcInstruction.getIndex();
+                Constant constant = constant_pool.getConstant(index);
+
+                if (constant instanceof ConstantString) {
+                  String bytes = ((ConstantString) constant).getBytes(constant_pool);
+                  // TODO: Possibly change it to CollectionsPlume.incrementMap(map, key)
+                  result.constantFrequency.put(
+                      bytes, result.constantFrequency.getOrDefault(bytes, 0) + 1);
+                } else if (constant instanceof ConstantInteger) {
+                  int intValue = ((ConstantInteger) constant).getBytes();
+                  result.constantFrequency.put(
+                      intValue, result.constantFrequency.getOrDefault(intValue, 0) + 1);
+                } else if (constant instanceof ConstantClass) {
+                  String className = ((ConstantClass) constant).getBytes(constant_pool);
+                  className = className.replace('/', '.');
+                  try {
+                    @SuppressWarnings("signature:cast.unsafe") // TODO: How you know about this
+                    Class<?> c = Class.forName((@ClassGetName String) className);
+                    // Add to the classes only if it is used by LDC instruction in order to avoid
+                    // self classes and classes like Java.lang.Object.class and
+                    // Java.lang.System.class.
+                    result.classes.add(c);
+                    result.constantFrequency.put(
+                        c, result.constantFrequency.getOrDefault(c, 0) + 1);
+                  } catch (ClassNotFoundException e) {
+                    throw new RandoopBug(e);
+                  }
+                } else if (constant instanceof ConstantFloat) {
+                  float floatValue = ((ConstantFloat) constant).getBytes();
+                  result.constantFrequency.put(
+                      floatValue, result.constantFrequency.getOrDefault(floatValue, 0) + 1);
+                  // TODO: Long and Doubles could be redundant
+                } else if (constant instanceof ConstantLong) {
+                  long longValue = ((ConstantLong) constant).getBytes();
+                  result.constantFrequency.put(
+                      longValue, result.constantFrequency.getOrDefault(longValue, 0) + 1);
+                } else if (constant instanceof ConstantDouble) {
+                  double doubleValue = ((ConstantDouble) constant).getBytes();
+                  result.constantFrequency.put(
+                      doubleValue, result.constantFrequency.getOrDefault(doubleValue, 0) + 1);
+                } else {
+                  throw new RuntimeException(
+                      "Unrecognized constant of type " + constant.getClass());
+                }
+                break;
+              }
             case Const.LDC_W:
+              // TODO: Could be redundant
+              {
+                LDC_W ldc_w = (LDC_W) inst;
+                int index = ldc_w.getIndex();
+                Constant constant = constant_pool.getConstant(index);
+                if (constant instanceof ConstantString) {
+                  String bytes = ((ConstantString) constant).getBytes(constant_pool);
+                  result.constantFrequency.put(
+                      bytes, result.constantFrequency.getOrDefault(bytes, 0) + 1);
+                } else if (constant instanceof ConstantInteger) {
+                  int intValue = ((ConstantInteger) constant).getBytes();
+                  result.constantFrequency.put(
+                      intValue, result.constantFrequency.getOrDefault(intValue, 0) + 1);
+                } else if (constant instanceof ConstantFloat) {
+                  float floatValue = ((ConstantFloat) constant).getBytes();
+                  result.constantFrequency.put(
+                      floatValue, result.constantFrequency.getOrDefault(floatValue, 0) + 1);
+                } else if (constant instanceof ConstantLong) {
+                  long longValue = ((ConstantLong) constant).getBytes();
+                  result.constantFrequency.put(
+                      longValue, result.constantFrequency.getOrDefault(longValue, 0) + 1);
+                } else if (constant instanceof ConstantDouble) {
+                  double doubleValue = ((ConstantDouble) constant).getBytes();
+                  result.constantFrequency.put(
+                      doubleValue, result.constantFrequency.getOrDefault(doubleValue, 0) + 1);
+                } else {
+                  throw new RuntimeException(
+                      "Unrecognized constant of type " + constant.getClass());
+                }
+                break;
+              }
             case Const.LDC2_W:
               {
+                // Like the LDC, but for longs and doubles
+                LDC2_W ldc2_w = (LDC2_W) inst;
+                int index = ldc2_w.getIndex();
+                Constant constant = constant_pool.getConstant(index);
+                if (constant instanceof ConstantLong) {
+                  long longValue = ((ConstantLong) constant).getBytes();
+                  result.constantFrequency.put(
+                      longValue, result.constantFrequency.getOrDefault(longValue, 0) + 1);
+                } else if (constant instanceof ConstantDouble) {
+                  double doubleValue = ((ConstantDouble) constant).getBytes();
+                  result.constantFrequency.put(
+                      doubleValue, result.constantFrequency.getOrDefault(doubleValue, 0) + 1);
+                } else {
+                  throw new RuntimeException(
+                      "Unrecognized constant of type " + constant.getClass());
+                }
                 break;
               }
 
-              // Push the length of an array on the stack
+            // Push the length of an array on the stack
             case Const.ARRAYLENGTH:
               {
                 break;
               }
 
-              // Push small constants (-1..5) on the stack.
+            // Push small constants (-1..5) on the stack.
             case Const.DCONST_0:
               doubleConstant(Double.valueOf(0), result);
               break;
@@ -455,7 +615,7 @@ public class ClassFileConstants {
               integerConstant((Integer) cpi.getValue(), result);
               break;
 
-              // Primitive Binary operators.
+            // Primitive Binary operators.
             case Const.DADD:
             case Const.DCMPG:
             case Const.DCMPL:
@@ -510,7 +670,7 @@ public class ClassFileConstants {
                 break;
               }
 
-              // push the value at an index in an array
+            // push the value at an index in an array
             case Const.AALOAD:
             case Const.BALOAD:
             case Const.CALOAD:
@@ -523,7 +683,7 @@ public class ClassFileConstants {
                 break;
               }
 
-              // Pop the top of stack into an array location
+            // Pop the top of stack into an array location
             case Const.AASTORE:
             case Const.BASTORE:
             case Const.CASTORE:
@@ -544,7 +704,7 @@ public class ClassFileConstants {
                 break;
               }
 
-              // subroutine calls.
+            // subroutine calls.
             case Const.INVOKESTATIC:
             case Const.INVOKEVIRTUAL:
             case Const.INVOKESPECIAL:
@@ -552,11 +712,11 @@ public class ClassFileConstants {
             case Const.INVOKEDYNAMIC:
               break;
 
-              // Throws an exception.
+            // Throws an exception.
             case Const.ATHROW:
               break;
 
-              // Opcodes that don't need any modifications. Here for reference.
+            // Opcodes that don't need any modifications. Here for reference.
             case Const.ACONST_NULL:
             case Const.ALOAD:
             case Const.ALOAD_0:
@@ -603,7 +763,7 @@ public class ClassFileConstants {
             case Const.WIDE:
               break;
 
-              // Make sure we didn't miss anything
+            // Make sure we didn't miss anything
             default:
               throw new RandoopBug("instruction " + inst + " unsupported");
           }
@@ -621,6 +781,7 @@ public class ClassFileConstants {
    */
   static void doubleConstant(Double value, ConstantSet cs) {
     cs.doubles.add(value);
+    cs.constantFrequency.put(value, cs.constantFrequency.getOrDefault(value, 0) + 1);
   }
 
   /**
@@ -631,6 +792,7 @@ public class ClassFileConstants {
    */
   static void floatConstant(Float value, ConstantSet cs) {
     cs.floats.add(value);
+    cs.constantFrequency.put(value, cs.constantFrequency.getOrDefault(value, 0) + 1);
   }
 
   /**
@@ -641,6 +803,7 @@ public class ClassFileConstants {
    */
   static void integerConstant(Integer value, ConstantSet cs) {
     cs.ints.add(value);
+    cs.constantFrequency.put(value, cs.constantFrequency.getOrDefault(value, 0) + 1);
   }
 
   /**
@@ -651,6 +814,7 @@ public class ClassFileConstants {
    */
   static void longConstant(Long value, ConstantSet cs) {
     cs.longs.add(value);
+    cs.constantFrequency.put(value, cs.constantFrequency.getOrDefault(value, 0) + 1);
   }
 
   /**
@@ -701,7 +865,7 @@ public class ClassFileConstants {
    * @param cs the ConstantSet
    * @return a set of NonreceiverTerms
    */
-  private static Set<NonreceiverTerm> constantSetToNonreceiverTerms(ConstantSet cs) {
+  public static Set<NonreceiverTerm> constantSetToNonreceiverTerms(ConstantSet cs) {
     Set<NonreceiverTerm> result = new HashSet<>();
     for (Integer x : cs.ints) {
       result.add(new NonreceiverTerm(JavaTypes.INT_TYPE, x));
@@ -719,6 +883,10 @@ public class ClassFileConstants {
       result.add(new NonreceiverTerm(JavaTypes.STRING_TYPE, x));
     }
     for (Class<?> x : cs.classes) {
+      result.add(new NonreceiverTerm(JavaTypes.CLASS_TYPE, x));
+    }
+    // TODO: Check if the enum is used as a Class_Type constant
+    for (Enum<?> x : cs.enums) {
       result.add(new NonreceiverTerm(JavaTypes.CLASS_TYPE, x));
     }
     return result;

@@ -14,6 +14,8 @@ import randoop.DummyVisitor;
 import randoop.Globals;
 import randoop.NormalExecution;
 import randoop.SubTypeSet;
+import randoop.generation.ConstantMining.ConstantMiningSelector;
+import randoop.generation.ConstantMining.TfIdfSelector;
 import randoop.main.GenInputsAbstract;
 import randoop.main.RandoopBug;
 import randoop.operation.NonreceiverTerm;
@@ -77,6 +79,16 @@ public class ForwardGenerator extends AbstractGenerator {
 
   /** How to select the method to use for creating a new sequence. */
   private final TypedOperationSelector operationSelector;
+
+  // Either all of the next 3 fields are null, or at most one of them is non-null.
+  /** How to select a constant value that is extracted by Constant Mining in the CLASS level. */
+  private ConstantMiningSelector<ClassOrInterfaceType> classCMSelector;
+
+  /** How to select a constant value that is extracted by Constant Mining in the PACKAGE level. */
+  private ConstantMiningSelector<Package> packageCMSelector;
+
+  /** How to select a constant value that is extracted by Constant Mining in the ALL level. */
+  private TfIdfSelector generalCMSelector;
 
   /**
    * The set of all primitive values seen during generation and execution of sequences. This set is
@@ -158,6 +170,28 @@ public class ForwardGenerator extends AbstractGenerator {
         break;
       default:
         throw new Error("Unhandled --input-selection: " + GenInputsAbstract.input_selection);
+    }
+
+    if (GenInputsAbstract.constant_mining) {
+      switch (GenInputsAbstract.literals_level) {
+        case ALL:
+          // Initialize the generalCMSelector
+          // TODO: This is dumb. Add methods in the constantManager or the wrapper
+          generalCMSelector =
+              new TfIdfSelector(
+                  componentManager.getConstantFrequencyInfoForType(null),
+                  componentManager.getClassesWithConstantInfoForType(null),
+                  componentManager.getTotalClassesForType(null));
+          break;
+        case PACKAGE:
+          packageCMSelector = new ConstantMiningSelector<>();
+          break;
+        case CLASS:
+          classCMSelector = new ConstantMiningSelector<>();
+          break;
+        default:
+          throw new Error("Unhandled literals_level: " + GenInputsAbstract.literals_level);
+      }
     }
   }
 
@@ -656,12 +690,11 @@ public class ForwardGenerator extends AbstractGenerator {
     // The total size of S
     int totStatements = 0;
 
-    // Variables to
-    // be used as inputs to the statement, represented as indices into S (ie, a reference to the
-    // statement that declares the variable).  [TODO: Is this an index into S or into `sequences`?].
-    // Upon successful completion
-    // of this method, variables will contain inputTypes.size() variables.
-    // Note additionally that for every i in variables, 0 <= i < |S|.
+    // Variables to be used as inputs to the statement, represented as indices into S (ie, a
+    // reference to the statement that declares the variable).  [TODO: Is this an index into S or
+    // into `sequences`?].
+    // Upon successful completion of this method, variables will contain inputTypes.size()
+    // variables.  Note additionally that for every i in variables, 0 <= i < |S|.
     //
     // For example, given as statement a method M(T1)/T2 that takes as input
     // a value of type T1 and returns a value of type T2, this method might
@@ -670,7 +703,7 @@ public class ForwardGenerator extends AbstractGenerator {
     // T0 var0 = new T0(); T1 var1 = var0.getT1();
     //
     // and the singleton list [0] that represents variable var1.
-    List<Integer> variables = new ArrayList<>();
+    List<Integer> inputVars = new ArrayList<>();
 
     // [Optimization]
     // The following two variables improve efficiency in the loop below when
@@ -681,6 +714,7 @@ public class ForwardGenerator extends AbstractGenerator {
     SubTypeSet types = new SubTypeSet(false);
     MultiMap<Type, Integer> typesToVars = new MultiMap<>(inputTypes.size());
 
+    // This loop populates `inputVars` and `sequences`.
     for (int i = 0; i < inputTypes.size(); i++) {
       Type inputType = inputTypes.get(i);
 
@@ -709,7 +743,7 @@ public class ForwardGenerator extends AbstractGenerator {
         if (!candidateVars2.isEmpty()) {
           int randVarIdx = Randomness.nextRandomInt(candidateVars2.size());
           Integer randVar = candidateVars2.get(randVarIdx);
-          variables.add(randVar);
+          inputVars.add(randVar);
           continue;
         }
       }
@@ -717,17 +751,68 @@ public class ForwardGenerator extends AbstractGenerator {
       // The user may have requested that we use null values as inputs with some given frequency.
       // If this is the case, then use null instead with some probability.
       if (!isReceiver
+          && !GenInputsAbstract.forbid_null
           && GenInputsAbstract.null_ratio != 0
           && Randomness.weightedCoinFlip(GenInputsAbstract.null_ratio)) {
         Log.logPrintf("Using null as input.%n");
         TypedOperation st = TypedOperation.createNullOrZeroInitializationForType(inputType);
         Sequence seq = new Sequence().extend(st, Collections.emptyList());
-        variables.add(totStatements);
+        inputVars.add(totStatements);
         sequences.add(seq);
         assert seq.size() == 1;
         totStatements++;
         continue;
       }
+
+      // If the user enables constant mining, under some probability we will use a constant value
+      // that extracted by Constant Mining based on the literals_level as input.
+      if (GenInputsAbstract.constant_mining
+          && Randomness.weightedCoinFlip(GenInputsAbstract.constant_mining_probability)) {
+        Log.logPrintf("Using constant mining as input.");
+        Sequence seq = null;
+        ClassOrInterfaceType declaringCls = ((TypedClassOperation) operation).getDeclaringType();
+        Package pkg = declaringCls.getPackage();
+        switch (GenInputsAbstract.literals_level) {
+          case ALL:
+            // Construct the candidate
+            SimpleList<Sequence> candidates =
+                componentManager.getConstantMiningSequences(operation, i, isReceiver);
+            seq = generalCMSelector.selectSequence(candidates);
+            break;
+          case PACKAGE:
+            // TODO: The following expressions are messy, but it is kind of necessary if we do not
+            // want to introduce generic type to the ComponentManager.
+            seq =
+                packageCMSelector.selectSequence(
+                    componentManager.getConstantMiningSequences(operation, i, isReceiver),
+                    pkg,
+                    componentManager.getConstantFrequencyInfoForType(pkg),
+                    componentManager.getClassesWithConstantInfoForType(pkg),
+                    componentManager.getTotalClassesForType(pkg));
+            break;
+          case CLASS:
+            seq =
+                classCMSelector.selectSequence(
+                    componentManager.getConstantMiningSequences(operation, i, isReceiver),
+                    declaringCls,
+                    componentManager.getConstantFrequencyInfoForType(declaringCls),
+                    null,
+                    1);
+            break;
+          default:
+            throw new Error("Unhandled literals_level: " + GenInputsAbstract.literals_level);
+        }
+
+        if (seq != null) {
+          // TODO: Verify that this is correct.
+          inputVars.add(totStatements);
+          sequences.add(seq);
+          totStatements += seq.size();
+          continue;
+        }
+      }
+
+      Log.logPrintf("Constant mining failed. Using normal input generation. The %n");
 
       // If we got here, it means we will not attempt to use null or a value already defined in S,
       // so we will have to augment S with new statements that yield a value of type inputTypes[i].
@@ -793,7 +878,7 @@ public class ForwardGenerator extends AbstractGenerator {
               "Found no sequences of required type; will use null as " + i + "-th input%n");
           TypedOperation st = TypedOperation.createNullOrZeroInitializationForType(inputType);
           Sequence seq = new Sequence().extend(st, Collections.emptyList());
-          variables.add(totStatements);
+          inputVars.add(totStatements);
           sequences.add(seq);
           assert seq.size() == 1;
           totStatements++;
@@ -824,12 +909,12 @@ public class ForwardGenerator extends AbstractGenerator {
         }
       }
 
-      variables.add(totStatements + randomVariable.index);
+      inputVars.add(totStatements + randomVariable.index);
       sequences.add(chosenSeq);
       totStatements += chosenSeq.size();
     }
 
-    return new InputsAndSuccessFlag(true, sequences, variables);
+    return new InputsAndSuccessFlag(true, sequences, inputVars);
   }
 
   // A pair of a variable and a sequence

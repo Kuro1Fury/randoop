@@ -456,6 +456,8 @@ You may want to adjust the command-line arguments.  For example, you can
 pass a <code>.jar</code> file instead of a <code>.class</code> file.  Or,
 you could remove <code>-R</code> (and possibly run it twice to get depth-2
 instead of depth-1).
+You may want to remove <code>-apionly</code> if you wish to see all
+the Java runtime methods that are referenced.
 </p>
 
 <p>
@@ -520,6 +522,15 @@ methods that will appear in a test case.
     Be careful when choosing classes and methods to test.
   </li>
 </ul>
+
+<p>
+Note that you may include members of the Java runtime libraries in your list of
+classes to test.  Randoop will generate tests to exercise these methods.
+However, you cannot use Jacoco to check for coverage of JDK classes or methods,
+because the Jacoco coverage tool cannot collect any data from the Java runtime
+libraries.
+</p>
+
 
 <h2 id="classifying_tests">Classifying tests</h2>
 
@@ -1164,6 +1175,9 @@ Randoop about your application, and that is how we recommend using Randoop.
   <li><b>INVALID</b> Occurrence of exception indicates an invalid test.
 </ul>
 
+      </ul>
+  <li id="optiongroup:Specifications-for-methods-constructors">Specifications for methods/constructors
+      <ul>
             <li id="option:specifications"><b>--specifications=</b><i>filename</i> <code>[+]</code>.
              Read file of specifications; see manual section <a href="https://randoop.github.io/randoop/manual/index.html#specifying-behavior">"Specifying
  expected code behavior"</a>.
@@ -1181,7 +1195,7 @@ Randoop about your application, and that is how we recommend using Randoop.
   <li id="optiongroup:Side-effect-free-methods">Side-effect-free methods
       <ul>
             <li id="option:side-effect-free-methods"><b>--side-effect-free-methods=</b><i>filename</i>.
-             File containing side-effect-free methods, each given as a <a href="https://randoop.github.io/randoop/manual/#fully-qualified-signature">fully-qualified
+             File containing side-effect-free methods (also known as "pure methods"), each given as a <a href="https://randoop.github.io/randoop/manual/#fully-qualified-signature">fully-qualified
  signature</a> on a separate line. Specifying side-effect-free methods has two benefits: it
  makes regression tests stronger, and it helps Randoop create smaller tests.
       </ul>
@@ -1223,8 +1237,8 @@ Randoop about your application, and that is how we recommend using Randoop.
  <p>For example, a null ratio of 0.05 directs Randoop to use <code>null</code> as an input 5 percent
  of the time when a non-<code>null</code> value of the appropriate type is available.
 
- <p>Unless --forbid_null is true, a <code>null</code> value will still be used if no other value can
- be passed as an argument even if --null-ratio=0.
+ <p>Unless <code>--forbid_null</code> is supplied, a <code>null</code> value will still be used if no
+ other value can be passed as an argument even if <code>--null-ratio=0</code>.
 
  <p>Randoop never uses <code>null</code> for receiver values. [default: 0.05]
             <li id="option:forbid-null"><b>--forbid-null=</b><i>boolean</i>.
@@ -1250,6 +1264,11 @@ Randoop about your application, and that is how we recommend using Randoop.
   <li><b>ALL</b> Each literal is used as input to any method under test.
 </ul>
 
+            <li id="option:constant-mining"><b>--constant-mining=</b><i>boolean</i>.
+             Whether to use literals from all classes under test to generate tests. [default: false]
+            <li id="option:constant-mining-probability"><b>--constant-mining-probability=</b><i>double</i>.
+             The probability of using a constant value as an input to a method under test. This option is
+ only used when <code>--constant-mining</code> is set to true. [default: 0.1]
             <li id="option:method-selection"><b>--method-selection=</b><i>enum</i>.
              Randoop generates new tests by choosing from a set of methods under test. This controls how the
  next method is chosen, from among all methods under test. [default: UNIFORM]
@@ -1259,7 +1278,9 @@ Randoop about your application, and that is how we recommend using Randoop.
  It weights each method under test based on the method's branch coverage and the number of
  times the method is chosen for a new sequence. It requires the Jacoco code coverage tool; run
  Randoop with <code>-Xbootclasspath/a:/path/to/jacocoagent.jar
- -javaagent:/path/to/jacocoagent.jar</code> .
+ -javaagent:/path/to/jacocoagent.jar</code>. Note that the Jacoco coverage tool cannot collect any
+ data from the Java runtime libraries, e.g., <code>java.lang</code>; thus they are not useful
+ candidates for the Bloodhound technique.
 </ul>
 
             <li id="option:string-maxlen"><b>--string-maxlen=</b><i>int</i>.
@@ -1365,27 +1386,33 @@ Randoop about your application, and that is how we recommend using Randoop.
  run Randoop multiple times with a different random seed, in order to produce multiple different
  test suites. [default: 0]
             <li id="option:deterministic"><b>--deterministic=</b><i>boolean</i>.
-             If true, Randoop is deterministic: running Randoop twice with the same arguments (including
- <code>--randomseed</code>) will produce the same test suite, so long as the program under test is
- deterministic. If false, Randoop may or may not produce the same test suite. To produce
- multiple different test suites, use the <code>--randomseed</code> command-line option. [default: false]
+             By default, Randoop is deterministic: running Randoop twice with the same arguments will
+ produce the same test suite, so long as the program under test is deterministic. (To produce
+ multiple different test suites, use the <code>--randomseed</code> command-line option.) However,
+ there are command-line arguments that make Randoop non-deterministic. Passing <code>
+ --deterministic</code> makes Randoop fail if one of the non-deterministic command-line arguments is
+ also passed; that is, passing <code>--deterministic</code> is a way to ensure you are not invoking
+ Randoop in a way that may lead to non-deterministic output. The <code>--deterministic</code> command
+ line argument doesn't itself do anything except check other command-line arguments. [default: false]
       </ul>
   <li id="optiongroup:Logging,-notifications,-and-troubleshooting-Randoop">Logging, notifications, and troubleshooting Randoop
       <ul>
             <li id="option:progressdisplay"><b>--progressdisplay=</b><i>boolean</i>.
              Run noisily: display information such as progress updates. [default: true]
             <li id="option:progressintervalmillis"><b>--progressintervalmillis=</b><i>long</i>.
-             Display progress message every &lt;int&gt; milliseconds. -1 means no display. [default: 60000]
+             Display a progress message every &lt;int&gt; milliseconds; -1 means no display. [default: 60000]
             <li id="option:progressintervalsteps"><b>--progressintervalsteps=</b><i>long</i>.
-             Display progress message every &lt;int&gt; attempts to create a test; -1 means none [default: 1000]
+             Display a progress message every &lt;int&gt; attempts to create a test; -1 means none. [default: 1000]
             <li id="option:debug-checks"><b>--debug-checks=</b><i>boolean</i>.
-             Perform expensive internal checks (for Randoop debugging) [default: false]
+             Perform expensive internal checks (for Randoop debugging). [default: false]
+            <li id="option:all-logs"><b>--all-logs=</b><i>boolean</i>.
+             Turns on all the logs. [default: false]
             <li id="option:log"><b>--log=</b><i>filename</i>.
              A file to which to log lots of information. If not specified, no logging is done. Enabling the
  logs slows down Randoop.
             <li id="option:selection-log"><b>--selection-log=</b><i>filename</i>.
-             A file to which to log selections; helps find sources of non-determinism. If not specified, no
- logging is done.
+             A file to which to log selections; helps find sources of non-determinism (randomness). If not
+ specified, no logging is done.
             <li id="option:operation-history-log"><b>--operation-history-log=</b><i>filename</i>.
              A file to which to write operation usage, when Randoop exits.
             <li id="option:print-non-compiling-file"><b>--print-non-compiling-file=</b><i>boolean</i>.
@@ -1414,15 +1441,18 @@ Randoop about your application, and that is how we recommend using Randoop.
       <ul>
             <li id="option:usethreads"><b>--usethreads=</b><i>boolean</i>.
              If true, Randoop executes each test in a separate thread and kills tests that take too long to
- finish, as determined by the --call-timeout command-line argument. Tests killed in this manner
- are not reported to the user, but are recorded in Randoop's log. Use the <code>--log</code>
- command-line option to make Randoop produce the log.
+ finish, as determined by the <code>--call-timeout-millis</code> command-line argument. Tests killed
+ in this manner are not reported to the user, but are recorded in Randoop's log. Use the <code>
+ --log</code> command-line option to make Randoop produce the log.
 
  <p>Use this option if Randoop does not terminate, which is usually due to execution of code
  under test that results in an infinite loop or that waits for user input. The downside of this
- option is a BIG (order-of-magnitude) decrease in generation speed. The tests are not run in
- parallel, merely in isolation. [default: false]
-            <li id="option:call-timeout"><b>--call-timeout=</b><i>int</i>.
+ option is a BIG (order-of-magnitude) decrease in generation speed. The tests are run in
+ parallel, but not in isolation. [default: false]
+            <li id="option:timed-out-tests"><b>--timed-out-tests=</b><i>filename</i>.
+             If specified, Randoop logs timed-out tests to the specified file. Has no effect unless the
+ <code>--usethreads</code> command-line option is given.
+            <li id="option:call-timeout-millis"><b>--call-timeout-millis=</b><i>int</i>.
              After this many milliseconds, a non-returning method call, and its associated test, are stopped
  forcefully. Only meaningful if <code>--usethreads</code> is also specified. [default: 5000]
       </ul>
@@ -1698,9 +1728,9 @@ throws-conditions (exceptional post-conditions):
   {
     "operation": <i>method-signature</i>,
     "identifiers": <i>formal-parameters</i>,
-    "pre-conditions": <i>pre-condition-list</i>,
-    "post-conditions": <i>normal-post-condition-list</i>,
-    "throws-conditions": <i>throws-condition-list</i>
+    "pre": <i>pre-condition-list</i>,
+    "post": <i>normal-post-condition-list</i>,
+    "throws": <i>throws-condition-list</i>
   }
 </code></pre>
 
@@ -2591,30 +2621,7 @@ Two possible reasons for a long-running test are:
 <ul>
   <li>Randoop is executing a test that contains nonterminating behavior,
     or that takes very long to execute.
-
-    <p>
-    The best solution is to determine the long-running method, then
-    fix it (if it is buggy) or exclude Randoop from calling it.
-    Here are ways to determine which method took a long time to execute:
-    </p>
-    <ul>
-      <li>Examine the stack traces that Randoop prints.</li>
-      <li>Examine the test that Randoop was running.</li>
-      <li>Run the test that Randoop was running.</li>
-      <li>Run Randoop with command-line option
-        <code>--usethreads</code>, and with <a
-        href="#optiongroup:Logging,-notifications,-and-troubleshooting-Randoop">logging
-          enabled</a>.
-        Examine the logs, which report which methods were terminated
-        because they ran for too long.
-      </li>
-    </ul>
-
-    <p>
-    Another possibility is to run Randoop with the command-line option
-    <a href="#option:usethreads"><code>--usethreads=true</code></a>,
-    without fixing the method or excluding it from Randoop.
-    </p>
+    See "<a href="#nontermination">Randoop does not terminate</a>".
   </li>
   <li>
     Java has run out of memory and is thrashing.
@@ -2634,27 +2641,53 @@ Two possible reasons for a long-running test are:
 <p>
 When Randoop does not terminate, that is usually because Randoop is creating
 tests that do not terminate (or that execute for a very long time).
-Here are three things you can do.
+You have two options.
 </p>
 <ul>
   <li>
-    Determine the test that is currently executing.  Use
+    Determine which method in which test is the problem, and give Randoop
+    information about that method so that Randoop will not call it in
+    long-running ways or not call it at all.
+    <ul>
+      <li>To determine the problematic method, do one of these:
+        <ul>
+          <li>Use
     the <a href="#option:usethreads"><code>--log=filename</code></a>
     command-line option, and the currently-executing test should be at the
-    end of the file.
-  </li>
-  <li>
-    Determine which calls are executing by examining the stack trace.
+            end of the file.
+          </li>
+          <li>Examine the stack trace.
     Use the <a
     href="https://docs.oracle.com/en/java/javase/17/docs/specs/man/jstack.html"><code>jstack</code></a>
     command, which you can run as <code>jstack <em>pid</em></code>.
     Get the process id by running <code>jcmd</code>.
     (On Unix you can also type <code>Ctrl-\</code>; that is, hold down the
-    Control key, then press the Backslash key.)  If the same methods appear
-    in multiple such stack traces, then you
-    can <a href="#specifying-methods">exclude them from consideration by
-    Randoop</a> or <a href="#replacecall">prevent the JVM from calling the
-    method</a>.
+    Control key, then press the Backslash key.)  A method that appears
+            in multiple such stack traces may be the problem.
+          </li>
+          <li>Run Randoop with command-line option
+            <a href="#option:usethreads"><code>--usethreads</code></a>, and with <a
+            href="#optiongroup:Logging,-notifications,-and-troubleshooting-Randoop">logging
+              enabled</a>.
+            Examine the logs, which report which methods were terminated
+            because they ran for too long.
+          </li>
+        </ul>
+      </li>
+      <li>
+        Fix a bug in the method, or prevent calls to the method using one of these techniques:
+        <ul>
+          <li>
+            <a href="#specifying-methods">Exclude a method from consideration by
+              Randoop</a> or
+          </li>
+          <li>
+            <a href="#replacecall">prevent the JVM from calling the
+              method</a>.
+          </li>
+        </ul>
+      </li>
+    </ul>
   </li>
   <li>
     Run Randoop with the command-line option
@@ -2664,11 +2697,6 @@ Here are three things you can do.
     <a href="#option:usethreads"><code>too long</code></a> to run.
   </li>
 </ul>
-
-<p>
-If you cannot fix the problem that causes the long execution, you might
-want to <a href="#option:omit-methods">exclude the method</a> from testing.
-</p>
 
 
 <h3 id="different-output">Randoop produces different output on different runs</h3>

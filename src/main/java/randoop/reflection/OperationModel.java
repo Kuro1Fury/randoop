@@ -26,6 +26,7 @@ import java.util.regex.Pattern;
 import org.checkerframework.checker.nullness.qual.Nullable;
 import org.checkerframework.checker.signature.qual.ClassGetName;
 import org.plumelib.util.EntryReader;
+import org.plumelib.util.StringsPlume;
 import org.plumelib.util.UtilPlume;
 import randoop.Globals;
 import randoop.condition.SpecificationCollection;
@@ -43,6 +44,7 @@ import randoop.contract.EqualsTransitive;
 import randoop.contract.ObjectContract;
 import randoop.contract.SizeToArrayLength;
 import randoop.generation.ComponentManager;
+import randoop.generation.ConstantMiningWrapper;
 import randoop.main.ClassNameErrorHandler;
 import randoop.main.GenInputsAbstract;
 import randoop.main.RandoopBug;
@@ -84,8 +86,11 @@ public class OperationModel {
   /** The set of classes used as goals in the covered-class test filter. */
   private final LinkedHashSet<Class<?>> coveredClassesGoal;
 
-  /** Map for singleton sequences of literals extracted from classes. */
+  /** The map from class to the literal sequences for the class. */
   private MultiMap<ClassOrInterfaceType, Sequence> classLiteralMap;
+
+  /** The wrapper for storing constant mining information. */
+  private ConstantMiningWrapper constantMiningWrapper;
 
   /** Set of singleton sequences for values from TestValue annotated fields. */
   private Set<Sequence> annotatedTestValues;
@@ -125,6 +130,8 @@ public class OperationModel {
 
     coveredClassesGoal = new LinkedHashSet<>();
     operations = new TreeSet<>();
+
+    constantMiningWrapper = new ConstantMiningWrapper();
   }
 
   /**
@@ -171,10 +178,13 @@ public class OperationModel {
 
     model.omitMethodsPredicate = new OmitMethodsPredicate(omitMethods);
 
+    // Add methods from the classes.
     model.addOperationsFromClasses(accessibility, reflectionPredicate, operationSpecifications);
+    // Add methods from the --methodlist command-line argument.
     model.operations.addAll(
         model.getOperationsFromFile(
             GenInputsAbstract.methodlist, accessibility, reflectionPredicate));
+    // Add the constructor "Object()".
     model.addObjectConstructor();
 
     return model;
@@ -254,7 +264,9 @@ public class OperationModel {
 
   /**
    * Adds literals to the component manager, by parsing any literals files specified by the user.
-   * Includes literals at different levels indicated by {@link ClassLiteralsMode}.
+   * Includes literals at different levels indicated by {@link ClassLiteralsMode}. Also adds the
+   * literals information (frequency and classesWithConstant) to the component manager if constant
+   * mining is enabled.
    *
    * @param compMgr the component manager
    * @param literalsFileList the list of literals file names
@@ -265,7 +277,6 @@ public class OperationModel {
 
     // Add a (1-element) sequence corresponding to each literal to the component
     // manager.
-
     for (String literalsFile : literalsFileList) {
       MultiMap<ClassOrInterfaceType, Sequence> literalMap;
       if (literalsFile.equals("CLASSES")) {
@@ -298,6 +309,10 @@ public class OperationModel {
           }
         }
       }
+    }
+
+    if (GenInputsAbstract.constant_mining) {
+      compMgr.setConstantMiningWrapper(constantMiningWrapper);
     }
   }
 
@@ -502,7 +517,7 @@ public class OperationModel {
     try {
       out.write("Operations: (" + operations.size() + ")" + Globals.lineSep);
       for (TypedOperation t : operations) {
-        out.write("  " + t.toString());
+        out.write("  " + StringsPlume.toStringAndClass(t.toString()));
         out.write(Globals.lineSep);
         out.flush();
       }
@@ -580,7 +595,12 @@ public class OperationModel {
     mgr.add(new TypeExtractor(this.inputTypes, accessibility));
     mgr.add(new TestValueExtractor(this.annotatedTestValues));
     mgr.add(new CheckRepExtractor(this.contracts));
-    if (literalsFileList.contains("CLASSES")) {
+
+    // TODO: The logic for the following two if blocks depends on the compatibility of literal files
+    // and constant mining
+    if (GenInputsAbstract.constant_mining) {
+      mgr.add(new ClassLiteralExtractor(this.constantMiningWrapper));
+    } else if (literalsFileList.contains("CLASSES")) {
       mgr.add(new ClassLiteralExtractor(this.classLiteralMap));
     }
 

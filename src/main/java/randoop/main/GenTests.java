@@ -9,6 +9,8 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Method;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.DirectoryStream;
@@ -37,25 +39,30 @@ import java.util.regex.PatternSyntaxException;
 import org.checkerframework.checker.nullness.qual.PolyNull;
 import org.checkerframework.checker.signature.qual.ClassGetName;
 import org.checkerframework.checker.signature.qual.Identifier;
+import org.checkerframework.dataflow.qual.Pure;
 import org.plumelib.options.Options;
 import org.plumelib.options.Options.ArgException;
 import org.plumelib.util.CollectionsPlume;
 import org.plumelib.util.EntryReader;
+import org.plumelib.util.FileWriterWithName;
 import org.plumelib.util.StringsPlume;
 import org.plumelib.util.UtilPlume;
 import randoop.ExecutionVisitor;
 import randoop.Globals;
 import randoop.MethodReplacements;
+import randoop.SideEffectFree;
 import randoop.condition.RandoopSpecificationError;
 import randoop.condition.SpecificationCollection;
 import randoop.execution.TestEnvironment;
 import randoop.generation.AbstractGenerator;
 import randoop.generation.ComponentManager;
 import randoop.generation.ForwardGenerator;
+import randoop.generation.OperationHistoryLogger;
 import randoop.generation.RandoopGenerationError;
 import randoop.generation.SeedSequences;
-import randoop.generation.TestUtils;
 import randoop.instrument.CoveredClassVisitor;
+import randoop.operation.CallableOperation;
+import randoop.operation.MethodCall;
 import randoop.operation.Operation;
 import randoop.operation.OperationParseException;
 import randoop.operation.TypedClassOperation;
@@ -185,6 +192,7 @@ public class GenTests extends GenInputsAbstract {
   }
 
   @Override
+  @SuppressWarnings("builder:required.method.not.called") // these few logs are closed upon exit
   public boolean handle(String[] args) {
 
     try {
@@ -412,6 +420,24 @@ public class GenTests extends GenInputsAbstract {
 
     MultiMap<Type, TypedClassOperation> sideEffectFreeMethodsByType = readSideEffectFreeMethods();
 
+    for (TypedOperation op : operations) {
+      CallableOperation operation = op.getOperation();
+      if (operation.isMethodCall()) {
+        MethodCall methodCall = (MethodCall) operation;
+        Method m = methodCall.getMethod();
+        // Read method annotations for @Pure and @SideEffectFree
+        for (Annotation annotation : m.getAnnotations()) {
+          if (annotation instanceof Pure || annotation instanceof SideEffectFree) {
+            // Get declaring class and create Type object
+            Class<?> declaringClass = m.getDeclaringClass();
+            Type type = Type.forClass(declaringClass);
+            sideEffectFreeMethodsByType.add(type, TypedOperation.forMethod(m));
+            break;
+          }
+        }
+      }
+    }
+
     Set<TypedOperation> sideEffectFreeMethods = new LinkedHashSet<>();
     for (Type keyType : sideEffectFreeMethodsByType.keySet()) {
       sideEffectFreeMethods.addAll(sideEffectFreeMethodsByType.getValues(keyType));
@@ -432,11 +458,35 @@ public class GenTests extends GenInputsAbstract {
             classesUnderTest);
 
     // log setup.
+    if (GenInputsAbstract.all_logs) {
+      if (GenInputsAbstract.selection_log == null) {
+        try {
+          GenInputsAbstract.selection_log = new FileWriterWithName("selection.log");
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        }
+      }
+      if (GenInputsAbstract.operation_history_log == null) {
+        try {
+          GenInputsAbstract.operation_history_log = new FileWriterWithName("operation-history.log");
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        }
+      }
+      if (GenInputsAbstract.log == null) {
+        try {
+          GenInputsAbstract.log = new FileWriterWithName("randoop.log");
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        }
+      }
+    }
     operationModel.log();
     if (GenInputsAbstract.operation_history_log != null) {
-      TestUtils.setOperationLog(new PrintWriter(GenInputsAbstract.operation_history_log), explorer);
+      OperationHistoryLogger historyLogger =
+          new OperationHistoryLogger(new PrintWriter(GenInputsAbstract.operation_history_log));
+      explorer.setOperationHistoryLogger(historyLogger);
     }
-    TestUtils.setSelectionLog(GenInputsAbstract.selection_log);
 
     // These two debugging lines make runNoOutputTest() fail:
     // operationModel.dumpModel(System.out);
@@ -599,6 +649,10 @@ public class GenTests extends GenInputsAbstract {
           sideEffectFreeMethodsByType,
           operationModel.getOmitMethodsPredicate(),
           accessibility);
+      if (GenInputsAbstract.progressdisplay) {
+        System.out.printf("Done looking for flaky methods.%n");
+        System.out.flush();
+      }
     } // if (!GenInputsAbstract.no_regression_tests)
 
     if (GenInputsAbstract.progressdisplay) {
@@ -619,6 +673,29 @@ public class GenTests extends GenInputsAbstract {
     // Operation history includes counts determined by getting regression sequences from explorer,
     // so dump after all done.
     explorer.getOperationHistory().outputTable();
+
+    if (GenInputsAbstract.log != null) {
+      try {
+        GenInputsAbstract.log.close();
+      } catch (IOException e) {
+        throw new RandoopBug("Error closing " + GenInputsAbstract.log.getFileName(), e);
+      }
+    }
+    if (GenInputsAbstract.selection_log != null) {
+      try {
+        GenInputsAbstract.selection_log.close();
+      } catch (IOException e) {
+        throw new RandoopBug("Error closing " + GenInputsAbstract.selection_log.getFileName(), e);
+      }
+    }
+    if (GenInputsAbstract.operation_history_log != null) {
+      try {
+        GenInputsAbstract.operation_history_log.close();
+      } catch (IOException e) {
+        throw new RandoopBug(
+            "Error closing " + GenInputsAbstract.operation_history_log.getFileName(), e);
+      }
+    }
 
     return true;
   }
